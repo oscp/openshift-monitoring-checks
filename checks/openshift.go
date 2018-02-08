@@ -71,7 +71,7 @@ func runOcGetNodes() (string, error) {
 func CheckDnsNslookupOnKubernetes() error {
 	log.Println("Checking nslookup to kubernetes ip")
 
-	cmd := exec.Command("nslookup", daemonDNSEndpoint, kubernetesIP)
+	cmd := exec.Command("nslookup", daemonDNSEndpoint + ".", kubernetesIP)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
