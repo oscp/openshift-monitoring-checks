@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"io"
+	"bufio"
 )
 
 const (
@@ -37,18 +39,32 @@ func CheckExternalSystem(url string) error {
 func CheckNtpd() error {
 	log.Println("Checking output of ntpstat")
 
-	out, err := exec.Command("bash", "-c", "ntpstat").Output()
+	out, err := exec.Command("bash", "-c", "ntpq -c rv 0 offset").StdoutPipe()
 	if err != nil {
 		msg := "Could not check ntpd status: " + err.Error()
 		log.Println(msg)
 		return errors.New(msg)
 	}
 
-	if strings.Contains(string(out), "time correct") {
-		return nil
-	} else {
+	offset, err := parseNTPOffsetFromNTPD(out)
+
+	if offset < -100 || offset > 100 {
 		return errors.New("Time is not correct on the server or ntpd is not running")
+	} else {
+		return nil
 	}
+}
+
+func parseNTPOffsetFromNTPD(out io.Reader) (float64, error) {
+	scr := bufio.NewScanner(out)
+	const offsetPrefix = "offset="
+	for scr.Scan() {
+		line := scr.Text()
+		if strings.HasPrefix(line, offsetPrefix) {
+			return strconv.ParseFloat(strings.TrimPrefix(line, offsetPrefix), 64)
+		}
+	}
+	return -1000, fmt.Errorf("couldn't get ntp offset. ntpd process may be down")
 }
 
 func getIpsForName(n string) []net.IP {
