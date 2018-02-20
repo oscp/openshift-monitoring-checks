@@ -51,7 +51,15 @@ func CheckOcGetNodes() error {
 			return err
 		}
 		if strings.Contains(out2, "NotReady") {
-			return errors.New("Some node is not ready! 'oc get nodes' output contained NotReady. Output: " + out2)
+			time.Sleep(10 * time.Second)
+
+			out3, err := runOcGetNodes()
+			if err != nil {
+				return err
+			}
+			if strings.Contains(out3, "NotReady") {
+				return errors.New("Some node is not ready! 'oc get nodes' output contained NotReady. Output: " + out3)
+			}
 		}
 	}
 
@@ -71,7 +79,7 @@ func runOcGetNodes() (string, error) {
 func CheckDnsNslookupOnKubernetes() error {
 	log.Println("Checking nslookup to kubernetes ip")
 
-	cmd := exec.Command("nslookup", daemonDNSEndpoint + ".", kubernetesIP)
+	cmd := exec.Command("nslookup", daemonDNSEndpoint+".", kubernetesIP)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -163,7 +171,11 @@ func CheckRegistryHealth(ip string) error {
 	log.Println("Checking registry health")
 
 	if err := checkHttp("http://" + ip + ":5000/healthz"); err != nil {
-		return fmt.Errorf("Registry health check failed. %v", err.Error())
+		time.Sleep(10 * time.Second)
+
+		if err2 := checkHttp("http://" + ip + ":5000/healthz"); err2 != nil {
+			return fmt.Errorf("Registry health check failed. %v", err2.Error())
+		}
 	}
 
 	return nil
@@ -183,7 +195,11 @@ func CheckRouterHealth(ip string) error {
 	log.Println("Checking router health", ip)
 
 	if err := checkHttp("http://" + ip + ":1936/healthz"); err != nil {
-		return fmt.Errorf("Router health check failed for %v, %v", ip, err.Error())
+		time.Sleep(10 * time.Second)
+
+		if err2 := checkHttp("http://" + ip + ":5000/healthz"); err2 != nil {
+			return fmt.Errorf("Router health check failed for %v, %v", ip, err2.Error())
+		}
 	}
 
 	return nil
