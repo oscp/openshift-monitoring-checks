@@ -35,7 +35,7 @@ func CheckExternalSystem(url string) error {
 }
 
 func CheckNtpd() error {
-	log.Println("Checking output of ntpstat")
+	log.Println("Checking output of 'ntpq -c rv 0 offset'")
 
 	out, err := exec.Command("bash", "-c", "ntpq -c rv 0 offset").Output()
 	if err != nil {
@@ -55,9 +55,10 @@ func CheckNtpd() error {
 
 func parseNTPOffsetFromNTPD(out string) (float64, error) {
 	for _, l := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(l, "mintc") {
+		if strings.Contains(l, "offset") {
 			// Example output
 			// mintc=3, offset=0.400, frequency=-4.546, sys_jitter=1.015,
+			// tc=10, mintc=3, offset=-0.648, frequency=3.934, sys_jitter=0.253,
 			rgx := regexp.MustCompile("(.*offset=)(.*?),")
 			offset := rgx.FindStringSubmatch(l)
 
