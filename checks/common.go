@@ -11,8 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"io"
-	"bufio"
 )
 
 const (
@@ -39,14 +37,14 @@ func CheckExternalSystem(url string) error {
 func CheckNtpd() error {
 	log.Println("Checking output of ntpstat")
 
-	out, err := exec.Command("bash", "-c", "ntpq -c rv 0 offset").StdoutPipe()
+	out, err := exec.Command("bash", "-c", "ntpq -c rv 0 offset").Output()
 	if err != nil {
 		msg := "Could not check ntpd status: " + err.Error()
 		log.Println(msg)
 		return errors.New(msg)
 	}
 
-	offset, err := parseNTPOffsetFromNTPD(out)
+	offset, err := parseNTPOffsetFromNTPD(string(out))
 
 	if offset < -100 || offset > 100 {
 		return errors.New("Time is not correct on the server or ntpd is not running")
@@ -55,16 +53,23 @@ func CheckNtpd() error {
 	}
 }
 
-func parseNTPOffsetFromNTPD(out io.Reader) (float64, error) {
-	scr := bufio.NewScanner(out)
-	const offsetPrefix = "offset="
-	for scr.Scan() {
-		line := scr.Text()
-		if strings.HasPrefix(line, offsetPrefix) {
-			return strconv.ParseFloat(strings.TrimPrefix(line, offsetPrefix), 64)
+func parseNTPOffsetFromNTPD(out string) (float64, error) {
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(l, "mintc") {
+			// Example output
+			// mintc=3, offset=0.400, frequency=-4.546, sys_jitter=1.015,
+			rgx := regexp.MustCompile("(.*offset=)(.*?),")
+			offset := rgx.FindStringSubmatch(l)
+
+			log.Println("Found ntpd offset:", offset[2])
+			out, err := strconv.ParseFloat(offset[2], 64)
+			if err != nil {
+				return -1000, fmt.Errorf("couldn't parse ntp offset. Value was %v", offset[2])
+			}
+			return out, nil
 		}
 	}
-	return -1000, fmt.Errorf("couldn't get ntp offset. ntpd process may be down")
+	return -1000, fmt.Errorf("couldn't parse ntp offset. Offset line was not found.")
 }
 
 func getIpsForName(n string) []net.IP {
