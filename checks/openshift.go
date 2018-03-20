@@ -9,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"io/ioutil"
+	"path/filepath"
+	"encoding/pem"
+	"crypto/x509"
 )
 
 func CheckMasterApis(urls string) error {
@@ -337,6 +341,91 @@ func CheckLimitsAndQuotas(allowedWithout int) error {
 	if pCount-allowedWithout != qCount {
 		return errors.New("There are some projects without quotas")
 	}
+
+	return nil
+}
+
+func decodeCertBlocks(data []byte) []*pem.Block  {
+	var blocks []*pem.Block
+	block, rest := pem.Decode([]byte(data))
+
+	if block != nil {
+		blocks = append(blocks, block)
+	}
+
+	if len(rest) > 0 {
+		return append(blocks, decodeCertBlocks(rest)...)
+	} else {
+		return blocks
+	}
+}
+
+func CheckSslCertificates(filePaths []string, days int) error {
+	log.Println("Checking expiry date for SSL certificates (" + strconv.Itoa(days) + " days).")
+
+	var certFiles []string
+
+	for _, path := range filePaths {
+		log.Println("Checking path", path + ".")
+		files, err := ioutil.ReadDir(path)
+		if err != nil {
+			msg := "could not read directory " + path + " (" + err.Error() + ")"
+			log.Println(msg)
+			return errors.New(msg)
+		}
+
+		for _, file := range files {
+			if file.IsDir() || filepath.Ext(file.Name()) != ".crt" {
+				continue
+			}
+
+			certFiles = append(certFiles, filepath.Join(path, file.Name()))
+		}
+	}
+
+	var certList []string
+
+	for _, file := range certFiles {
+
+		data, err := ioutil.ReadFile(file)
+		if err != nil {
+			msg := "could not read file " + file
+			log.Println(msg)
+			return errors.New(msg)
+		}
+
+		blocks := decodeCertBlocks([]byte(data))
+
+		for _, block := range blocks {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				msg := "certificate parsing error (" + err.Error() + ")"
+				log.Println(msg)
+				return errors.New(msg)
+			}
+
+			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+
+			if int(daysLeft) <= days {
+				msg := file + " expires in " + strconv.Itoa(int(daysLeft)) + " days"
+				log.Println(msg)
+				certList = append(certList, msg)
+			} else {
+				log.Println(file + " expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+			}
+		}
+
+	}
+
+	if len(certList) > 0 {
+		var errorMessage string
+		for _, msg := range certList {
+			errorMessage = errorMessage + msg + " "
+		}
+		return errors.New(errorMessage)
+	}
+
+	// TODO: special file handling for /root/.kube/config
 
 	return nil
 }
