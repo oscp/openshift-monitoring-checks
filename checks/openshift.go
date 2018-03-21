@@ -15,6 +15,7 @@ import (
 	"crypto/x509"
 	"gopkg.in/yaml.v2"
 	"encoding/base64"
+	"os"
 )
 
 func CheckMasterApis(urls string) error {
@@ -393,15 +394,21 @@ type KubeConfig struct {
 }
 
 func CheckSslCertificates(filePaths []string, days int) error {
-	log.Println("Checking expiry date for SSL certificates (" + strconv.Itoa(days) + " days).")
+	log.Printf("Checking expiry date for SSL certificates (%d days).", days)
 
 	var certFiles []string
 
 	for _, path := range filePaths {
-		log.Println("Checking path", path + ".")
+		log.Printf("Checking path %s.", path)
+
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			log.Printf("Path %s does not exist.", path)
+			continue
+		}
+
 		files, err := ioutil.ReadDir(path)
 		if err != nil {
-			msg := "could not read directory " + path + " (" + err.Error() + ")"
+			msg := fmt.Sprint("could not read directory %s (%s)", path, err.Error())
 			log.Println(msg)
 			return errors.New(msg)
 		}
@@ -419,9 +426,14 @@ func CheckSslCertificates(filePaths []string, days int) error {
 
 	for _, file := range certFiles {
 
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			log.Printf("File %s does not exist.", file)
+			continue
+		}
+
 		data, err := ioutil.ReadFile(file)
 		if err != nil {
-			msg := "could not read file " + file
+			msg := fmt.Sprintf("could not read file %s", file)
 			log.Println(msg)
 			return errors.New(msg)
 		}
@@ -431,7 +443,7 @@ func CheckSslCertificates(filePaths []string, days int) error {
 		for _, block := range blocks {
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				msg := "certificate parsing error (" + err.Error() + ")"
+				msg := fmt.Sprintf("certificate parsing error (%s)", err.Error())
 				log.Println(msg)
 				return errors.New(msg)
 			}
@@ -439,82 +451,88 @@ func CheckSslCertificates(filePaths []string, days int) error {
 			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
 
 			if int(daysLeft) <= days {
-				msg := file + " expires in " + strconv.Itoa(int(daysLeft)) + " days"
+				msg := fmt.Sprintf("%s expires in %d days", file, int(daysLeft))
 				log.Println(msg)
 				certErrorList = append(certErrorList, msg)
 			} else {
-				log.Println(file + " expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+				log.Printf("%s expires in %d days. This is OK.", file, int(daysLeft))
 			}
 		}
 
 	}
 
-	data, err := ioutil.ReadFile("/root/.kube/config")
-	if err != nil {
-		msg := "could not read file /root/.kube/config"
-		log.Println(msg)
-		return errors.New(msg)
-	}
+	if _, err := os.Stat("/root/.kube/config"); os.IsNotExist(err) {
+		log.Println("File /root/.kube/config does not exist.")
+	} else {
 
-	var kubeConfig KubeConfig
+		data, err := ioutil.ReadFile("/root/.kube/config")
+		if err != nil {
+			msg := "could not read file /root/.kube/config"
+			log.Println(msg)
+			return errors.New(msg)
+		}
 
-	err = yaml.Unmarshal(data, &kubeConfig)
-	if err != nil {
-		msg := "unmarhsalling /root/.kube/config failed (" + err.Error() + ")"
-		log.Println(msg)
-		return errors.New(msg)
-	}
+		var kubeConfig KubeConfig
 
-	for _, cluster := range kubeConfig.Clusters {
-		if len(cluster.Cluster.CertificateAuthorityData) > 0 {
+		err = yaml.Unmarshal(data, &kubeConfig)
+		if err != nil {
+			msg := fmt.Sprintf("unmarshalling /root/.kube/config failed (%s)", err.Error())
+			log.Println(msg)
+			return errors.New(msg)
+		}
 
-			certBytes, _ := base64.StdEncoding.DecodeString(cluster.Cluster.CertificateAuthorityData)
-			block, _ := pem.Decode(certBytes)
+		for _, cluster := range kubeConfig.Clusters {
+			if len(cluster.Cluster.CertificateAuthorityData) > 0 {
 
-			cert, err := x509.ParseCertificate(block.Bytes)
+				certBytes, _ := base64.StdEncoding.DecodeString(cluster.Cluster.CertificateAuthorityData)
+				block, _ := pem.Decode(certBytes)
 
-			if err != nil {
-				msg := "certificate parsing error (" + err.Error() + ")"
-				log.Println(msg)
-				return errors.New(msg)
-			}
+				cert, err := x509.ParseCertificate(block.Bytes)
 
-			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+				if err != nil {
+					msg := fmt.Sprintf("certificate parsing error (%s)", err.Error())
+					log.Println(msg)
+					return errors.New(msg)
+				}
 
-			if int(daysLeft) <= days {
-				msg := "certificate-authority-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days"
-				log.Println(msg)
-				certErrorList = append(certErrorList, msg)
-			} else {
-				log.Println("certificate-authority-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+				daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+
+				if int(daysLeft) <= days {
+					msg := fmt.Sprintf("certificate-authority-data from /root/.kube/config expires in %d days", int(daysLeft))
+					log.Println(msg)
+					certErrorList = append(certErrorList, msg)
+				} else {
+					log.Printf("certificate-authority-data from /root/.kube/config expires in %d days. This is OK.", int(daysLeft))
+				}
 			}
 		}
-	}
 
-	for _, user := range kubeConfig.Users {
-		if len(user.User.ClientCertificateData) > 0 {
+		for _, user := range kubeConfig.Users {
+			if len(user.User.ClientCertificateData) > 0 {
 
-			certBytes, _ := base64.StdEncoding.DecodeString(user.User.ClientCertificateData)
-			block, _ := pem.Decode(certBytes)
+				certBytes, _ := base64.StdEncoding.DecodeString(user.User.ClientCertificateData)
+				block, _ := pem.Decode(certBytes)
 
-			cert, err := x509.ParseCertificate(block.Bytes)
+				cert, err := x509.ParseCertificate(block.Bytes)
 
-			if err != nil {
-				msg := "certificate parsing error (" + err.Error() + ")"
-				log.Println(msg)
-				return errors.New(msg)
-			}
+				if err != nil {
+					msg := fmt.Sprintf("certificate parsing error (%s)", err.Error())
+					log.Println(msg)
+					return errors.New(msg)
+				}
 
-			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+				daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
 
-			if int(daysLeft) <= days {
-				msg := "client-certificate-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days"
-				log.Println(msg)
-				certErrorList = append(certErrorList, msg)
-			} else {
-				log.Println("client-certificate-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+				if int(daysLeft) <= days {
+					msg := fmt.Sprintf("client-certificate-data from /root/.kube/config expires in %d days", int(daysLeft))
+					log.Println(msg)
+					certErrorList = append(certErrorList, msg)
+				} else {
+					log.Printf("client-certificate-data from /root/.kube/config expires in %d days. This is OK.", int(daysLeft))
+				}
 			}
 		}
+
 	}
 
 	if len(certErrorList) > 0 {
