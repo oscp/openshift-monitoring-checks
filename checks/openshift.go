@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"encoding/pem"
 	"crypto/x509"
+	"gopkg.in/yaml.v2"
+	"encoding/base64"
 )
 
 func CheckMasterApis(urls string) error {
@@ -360,6 +362,36 @@ func decodeCertBlocks(data []byte) []*pem.Block  {
 	}
 }
 
+type KubeConfig struct {
+	APIVersion string `yaml:"apiVersion"`
+	Clusters   []struct {
+		Cluster struct {
+			CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			Server                   string `yaml:"server"`
+		} `yaml:"cluster"`
+		Name string `yaml:"name"`
+	} `yaml:"clusters"`
+	Contexts []struct {
+		Context struct {
+			Cluster   string `yaml:"cluster"`
+			Namespace string `yaml:"namespace"`
+			User      string `yaml:"user"`
+		} `yaml:"context"`
+		Name string `yaml:"name"`
+	} `yaml:"contexts"`
+	CurrentContext string `yaml:"current-context"`
+	Kind           string `yaml:"kind"`
+	Preferences    struct {
+	} `yaml:"preferences"`
+	Users []struct {
+		Name string `yaml:"name"`
+		User struct {
+			ClientCertificateData string `yaml:"client-certificate-data"`
+			ClientKeyData         string `yaml:"client-key-data"`
+		} `yaml:"user"`
+	} `yaml:"users"`
+}
+
 func CheckSslCertificates(filePaths []string, days int) error {
 	log.Println("Checking expiry date for SSL certificates (" + strconv.Itoa(days) + " days).")
 
@@ -383,7 +415,7 @@ func CheckSslCertificates(filePaths []string, days int) error {
 		}
 	}
 
-	var certList []string
+	var certErrorList []string
 
 	for _, file := range certFiles {
 
@@ -409,7 +441,7 @@ func CheckSslCertificates(filePaths []string, days int) error {
 			if int(daysLeft) <= days {
 				msg := file + " expires in " + strconv.Itoa(int(daysLeft)) + " days"
 				log.Println(msg)
-				certList = append(certList, msg)
+				certErrorList = append(certErrorList, msg)
 			} else {
 				log.Println(file + " expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
 			}
@@ -417,15 +449,81 @@ func CheckSslCertificates(filePaths []string, days int) error {
 
 	}
 
-	if len(certList) > 0 {
+	data, err := ioutil.ReadFile("/root/.kube/config")
+	if err != nil {
+		msg := "could not read file /root/.kube/config"
+		log.Println(msg)
+		return errors.New(msg)
+	}
+
+	var kubeConfig KubeConfig
+
+	err = yaml.Unmarshal(data, &kubeConfig)
+	if err != nil {
+		msg := "unmarhsalling /root/.kube/config failed (" + err.Error() + ")"
+		log.Println(msg)
+		return errors.New(msg)
+	}
+
+	for _, cluster := range kubeConfig.Clusters {
+		if len(cluster.Cluster.CertificateAuthorityData) > 0 {
+
+			certBytes, _ := base64.StdEncoding.DecodeString(cluster.Cluster.CertificateAuthorityData)
+			block, _ := pem.Decode(certBytes)
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+
+			if err != nil {
+				msg := "certificate parsing error (" + err.Error() + ")"
+				log.Println(msg)
+				return errors.New(msg)
+			}
+
+			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+
+			if int(daysLeft) <= days {
+				msg := "certificate-authority-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days"
+				log.Println(msg)
+				certErrorList = append(certErrorList, msg)
+			} else {
+				log.Println("certificate-authority-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+			}
+		}
+	}
+
+	for _, user := range kubeConfig.Users {
+		if len(user.User.ClientCertificateData) > 0 {
+
+			certBytes, _ := base64.StdEncoding.DecodeString(user.User.ClientCertificateData)
+			block, _ := pem.Decode(certBytes)
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+
+			if err != nil {
+				msg := "certificate parsing error (" + err.Error() + ")"
+				log.Println(msg)
+				return errors.New(msg)
+			}
+
+			daysLeft := cert.NotAfter.Sub(time.Now()).Hours()/24
+
+			if int(daysLeft) <= days {
+				msg := "client-certificate-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days"
+				log.Println(msg)
+				certErrorList = append(certErrorList, msg)
+			} else {
+				log.Println("client-certificate-data from /root/.kube/config expires in " + strconv.Itoa(int(daysLeft)) + " days. This is OK.")
+			}
+		}
+	}
+
+	if len(certErrorList) > 0 {
 		var errorMessage string
-		for _, msg := range certList {
+		for _, msg := range certErrorList {
 			errorMessage = errorMessage + msg + " "
 		}
 		return errors.New(errorMessage)
 	}
-
-	// TODO: special file handling for /root/.kube/config
 
 	return nil
 }
