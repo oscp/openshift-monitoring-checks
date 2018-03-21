@@ -348,21 +348,6 @@ func CheckLimitsAndQuotas(allowedWithout int) error {
 	return nil
 }
 
-func decodeCertBlocks(data []byte) []*pem.Block  {
-	var blocks []*pem.Block
-	block, rest := pem.Decode([]byte(data))
-
-	if block != nil {
-		blocks = append(blocks, block)
-	}
-
-	if len(rest) > 0 {
-		return append(blocks, decodeCertBlocks(rest)...)
-	} else {
-		return blocks
-	}
-}
-
 type KubeConfig struct {
 	APIVersion string `yaml:"apiVersion"`
 	Clusters   []struct {
@@ -393,9 +378,22 @@ type KubeConfig struct {
 	} `yaml:"users"`
 }
 
-func CheckSslCertificates(filePaths []string, days int) error {
-	log.Printf("Checking expiry date for SSL certificates (%d days).", days)
+func decodeCertBlocks(data []byte) []*pem.Block  {
+	var blocks []*pem.Block
+	block, rest := pem.Decode([]byte(data))
 
+	if block != nil {
+		blocks = append(blocks, block)
+	}
+
+	if len(rest) > 0 {
+		return append(blocks, decodeCertBlocks(rest)...)
+	} else {
+		return blocks
+	}
+}
+
+func GetCertFiles(filePaths []string) (error, []string) {
 	var certFiles []string
 
 	for _, path := range filePaths {
@@ -410,7 +408,7 @@ func CheckSslCertificates(filePaths []string, days int) error {
 		if err != nil {
 			msg := fmt.Sprint("could not read directory %s (%s)", path, err.Error())
 			log.Println(msg)
-			return errors.New(msg)
+			return errors.New(msg), nil
 		}
 
 		for _, file := range files {
@@ -422,7 +420,20 @@ func CheckSslCertificates(filePaths []string, days int) error {
 		}
 	}
 
+	return nil, certFiles
+}
+
+func CheckSslCertificates(filePaths []string, days int) error {
+	log.Printf("Checking expiry date for SSL certificates (%d days).", days)
+
 	var certErrorList []string
+
+	err, certFiles := GetCertFiles(filePaths)
+	if err != nil {
+		msg := fmt.Sprintf("could not get files (%s)", err.Error())
+		log.Println(msg)
+		return errors.New(msg)
+	}
 
 	for _, file := range certFiles {
 
