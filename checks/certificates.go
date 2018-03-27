@@ -75,7 +75,7 @@ func getCertFiles(filePaths []string) (error, []string) {
 
 		files, err := ioutil.ReadDir(path)
 		if err != nil {
-			msg := fmt.Sprint("could not read directory %s (%s)", path, err.Error())
+			msg := fmt.Sprintf("could not read directory %s (%s)", path, err.Error())
 			log.Println(msg)
 			return errors.New(msg), nil
 		}
