@@ -12,6 +12,8 @@ import (
 	"gopkg.in/yaml.v2"
 	"encoding/base64"
 	"errors"
+	"net/http"
+	"crypto/tls"
 )
 
 type Cert struct {
@@ -132,8 +134,58 @@ func getExpiredCerts(filePaths []string, days int) (error, []Cert) {
 	return nil, expiredCerts
 }
 
-func CheckSslCertificates(filePaths []string, days int) error {
-	log.Printf("Checking expiry date for SSL certificates (%d days).", days)
+func CheckUrlSslCertificates(urls []string, days int) error {
+	log.Printf("Checking expiry date for SSL certificates (%d days) via urls.", days)
+
+	var certErrorList []string
+
+	for _, url := range urls {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			msg := fmt.Sprintf("creating request failed for %s (%s)", url, err.Error())
+			log.Println(msg)
+			return errors.New(msg)
+		}
+
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+
+		hc := &http.Client{Transport: tr}
+
+		resp, err := hc.Do(req)
+		if err != nil {
+			msg := fmt.Sprintf("get request failed for %s (%s)", url, err.Error())
+			log.Println(msg)
+			return errors.New(msg)
+		}
+
+		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+			for _, cert := range resp.TLS.PeerCertificates {
+				daysLeft := cert.NotAfter.Sub(time.Now()).Hours() / 24
+
+				if int(daysLeft) <= days {
+					msg := fmt.Sprintf("certificate %s from %s expires in %d days", cert.Subject, url, int(daysLeft))
+					log.Println(msg)
+					certErrorList = append(certErrorList, msg)
+				}
+			}
+		}
+	}
+
+	if len(certErrorList) > 0 {
+		var errorMessage string
+		for _, msg := range certErrorList {
+			errorMessage = errorMessage + msg + " "
+		}
+		return errors.New(errorMessage)
+	}
+
+	return nil
+}
+
+func CheckFileSslCertificates(filePaths []string, days int) error {
+	log.Printf("Checking expiry date for SSL certificates (%d days) in files.", days)
 
 	var certErrorList []string
 
